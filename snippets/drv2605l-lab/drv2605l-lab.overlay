@@ -1,0 +1,17 @@
+/ {
+    aliases {
+        drv2605l = &haptic;
+    };
+};
+
+&i2c1 {
+    status = "okay";
+    haptic: drv2605@5a {
+        compatible = "ti,drv2605";
+        reg = <0x5a>;
+        status = "okay";
+        actuator-mode = "ERM";
+        vib-rated-mv = <3000>;
+        vib-overdrive-mv = <3300>;
+    };
+};

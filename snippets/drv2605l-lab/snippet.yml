@@ -1,0 +1,4 @@
+name: drv2605l-lab
+append:
+  EXTRA_DTC_OVERLAY_FILE: drv2605l-lab.overlay
+  EXTRA_CONF_FILE: drv2605l-lab.conf

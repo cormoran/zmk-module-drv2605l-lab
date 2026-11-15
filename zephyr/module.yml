@@ -1,7 +1,7 @@
 # Delete all unused properties.
 
 # Give your module a name
-name: zmk-module-template
+name: zmk-module-drv2605l-lab
 build:
   # List your dependencies
   # depends:

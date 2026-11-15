@@ -52,7 +52,7 @@ except ImportError:  # pragma: no cover - convenience fallback for local dev
         raise
 
 
-SUBSYSTEM_IDENTIFIER = "your_name__template"
+SUBSYSTEM_IDENTIFIER = "cormoran__drv2605l_lab"
 # This template registers exactly one custom subsystem, so its index is
 # deterministically 0.
 KNOWN_SUBSYSTEM_INDEX = 0
@@ -60,10 +60,6 @@ KNOWN_SUBSYSTEM_INDEX = 0
 # registers -- used to exercise the fast-path dispatch (see
 # test_custom_rpc_invalid_index_dispatch).
 INVALID_SUBSYSTEM_INDEX = 99
-
-SAMPLE_VALUE = 42
-# See handle_sample_request() in src/studio/template_handler.c.
-EXPECTED_SAMPLE_RESPONSE = f"Hello from firmware! Received: {SAMPLE_VALUE}"
 
 # attach_dual_cdc_bridge's default bridge name -> monitor object prefix.
 BRIDGE_NAME = "bridge"
@@ -81,7 +77,7 @@ class RenodeWiredSplitModuleTests(unittest.TestCase):
 
     renode_path: str
     studio_pb2 = None
-    template_pb2 = None
+    lab_pb2 = None
 
     @classmethod
     def setUpClass(cls):
@@ -127,19 +123,37 @@ class RenodeWiredSplitModuleTests(unittest.TestCase):
 
         # Core zmk.studio.* messages (Request/Response envelope, core.proto,
         # custom.proto for the generic custom-subsystem envelope).
-        studio_proto_dir = renode_harness.find_studio_proto_dir(REPO_ROOT)
+        proto_candidates = [
+            REPO_ROOT
+            / "dependencies"
+            / "modules"
+            / "msgs"
+            / "zmk-studio-messages"
+            / "proto"
+            / "zmk",
+            *(
+                parent / "modules" / "msgs" / "zmk-studio-messages" / "proto" / "zmk"
+                for parent in REPO_ROOT.parents
+            ),
+        ]
+        studio_proto_dir = next(
+            (candidate for candidate in proto_candidates if candidate.is_dir()), None
+        )
+        if studio_proto_dir is None:
+            raise FileNotFoundError(
+                "zmk-studio-messages proto directory is unavailable"
+            )
         cls.studio_pb2 = renode_harness.load_studio_pb2(studio_proto_dir)
 
-        # This module's own proto (package your_name.template) -- protoc
-        # normalizes the hyphenated "your-name" path to the "your_name" package.
+        # Compile this module's proto for the Renode RPC client.
         out_dir = renode_harness.compile_protos(
-            [REPO_ROOT / "proto" / "your-name" / "template" / "template.proto"],
+            [REPO_ROOT / "proto" / "cormoran" / "drv2605l-lab" / "drv2605l_lab.proto"],
             include_dirs=[REPO_ROOT / "proto"],
         )
         sys.path.insert(0, str(out_dir))
-        import your_name.template.template_pb2 as template_pb2  # type: ignore
+        import cormoran.drv2605l_lab.drv2605l_lab_pb2 as lab_pb2  # type: ignore
 
-        cls.template_pb2 = template_pb2
+        cls.lab_pb2 = lab_pb2
 
         # Boot the pair and attach the DualCdcAcmBridge USB host to reach the
         # central's Studio CDC (the same steps run_usb_wired_smoke uses).
@@ -234,35 +248,48 @@ class RenodeWiredSplitModuleTests(unittest.TestCase):
 
     # -- The real thing: this module's own custom RPC, over USB --------------
 
-    def test_custom_rpc_sample_round_trip_over_usb(self):
-        """Send this module's own SampleRequest to its registered subsystem
-        (index 0) and assert the SampleResponse comes back over the central's
-        USB CDC."""
-        inner_req = self.template_pb2.Request()
-        inner_req.sample.value = SAMPLE_VALUE
-        self._send_call(KNOWN_SUBSYSTEM_INDEX, inner_req.SerializeToString(), request_id=1)
-
+    def _call_lab(self, inner_req, request_id):
+        self._send_call(
+            KNOWN_SUBSYSTEM_INDEX, inner_req.SerializeToString(), request_id
+        )
         resp = self._read_response()
         self.assertEqual(resp.WhichOneof("type"), "request_response")
-        self.assertEqual(resp.request_response.request_id, 1)
+        self.assertEqual(resp.request_response.request_id, request_id)
         self.assertEqual(resp.request_response.WhichOneof("subsystem"), "custom")
+        call = resp.request_response.custom.call
+        self.assertEqual(call.subsystem_index, KNOWN_SUBSYSTEM_INDEX)
+        inner_resp = self.lab_pb2.Response()
+        inner_resp.ParseFromString(call.payload)
+        return inner_resp
 
-        # zmk.custom.Response -> CallResponse{subsystem_index, payload}.
-        custom_resp = resp.request_response.custom
-        self.assertEqual(custom_resp.WhichOneof("response_type"), "call")
-        self.assertEqual(custom_resp.call.subsystem_index, KNOWN_SUBSYSTEM_INDEX)
+    def test_no_device_status_and_errors_over_usb(self):
+        req = self.lab_pb2.Request()
+        req.get_status.SetInParent()
+        resp = self._call_lab(req, 11)
+        self.assertEqual(resp.WhichOneof("response_type"), "status")
+        self.assertFalse(resp.status.present)
+        self.assertFalse(resp.status.ready)
+        self.assertEqual(resp.status.error_code, -19)  # ENODEV
 
-        inner_resp = self.template_pb2.Response()
-        inner_resp.ParseFromString(custom_resp.call.payload)
-        self.assertEqual(inner_resp.WhichOneof("response_type"), "sample")
-        self.assertEqual(inner_resp.sample.value, EXPECTED_SAMPLE_RESPONSE)
+        req = self.lab_pb2.Request()
+        req.play.library = 1
+        req.play.effect = 1
+        resp = self._call_lab(req, 12)
+        self.assertEqual(resp.result.error_code, -19)
 
-    # The module's split-relay sample (central forwarding the value to the
-    # peripheral) is covered by the BabbleSim BLE test, not here: relay-over-wired
-    # needs a newer zmk than the pin. To add once it advances: build the
-    # peripheral with the module + CONFIG_ZMK_SPLIT_RELAY_EVENT and assert its
-    # "Peripheral received relayed sample value: 42 (v1)" log on
-    # self.peripheral_console.
+        for request_id, (library, effect) in enumerate(
+            [(0, 1), (7, 1), (1, 0), (1, 124)], start=13
+        ):
+            req = self.lab_pb2.Request()
+            req.play.library = library
+            req.play.effect = effect
+            resp = self._call_lab(req, request_id)
+            self.assertEqual(resp.result.error_code, -22)  # EINVAL
+
+        req = self.lab_pb2.Request()
+        req.stop.SetInParent()
+        resp = self._call_lab(req, 17)
+        self.assertEqual(resp.result.error_code, -19)
 
 
 if __name__ == "__main__":

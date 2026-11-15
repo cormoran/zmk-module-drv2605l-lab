@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import platform
 import shutil
 import subprocess
@@ -10,7 +9,7 @@ from pathlib import Path
 from dataclasses import dataclass
 
 THIS_DIR = Path(__file__).parent.resolve()
-TEST_BUILD_DIR_NAME = "tests-zmk-module-template-with-custom-studio-rpc"
+TEST_BUILD_DIR_NAME = "tests-zmk-module-drv2605l-lab"
 
 
 def run_west(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -42,7 +41,7 @@ class WestCommandsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.WEST_TOPDIR = Path(run_west(["topdir"]).stdout.strip())
-        cls.BUILD_DIR = cls.WEST_TOPDIR / "build"
+        cls.BUILD_DIR = THIS_DIR / "build"
 
     @unittest.skipUnless(
         platform.system() == "Linux", "zmk-test is only supported on Linux"
@@ -56,59 +55,44 @@ class WestCommandsTests(unittest.TestCase):
         self.assertIn("PASS: studio", result.stdout, result.stdout + result.stderr)
         self.assertNotIn("FAILED: ", result.stdout, result.stdout + result.stderr)
 
-    @unittest.skipUnless(
-        platform.system() == "Linux" and os.environ.get("BSIM_OUT_PATH"),
-        "BLE tests require Linux and a compiled BabbleSim tree (BSIM_OUT_PATH)",
-    )
-    def test_ble(self):
-        # BLE (BabbleSim) tests run via zmk-west-commands' `west zmk-ble-test`
-        # command (builds the DUT/peripherals/host under bsim and diffs each
-        # case's filtered output against its checked-in snapshot).
-        result = run_west(["zmk-ble-test", "tests/ble", "-m", "."])
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn(
-            "PASS: studio/custom-rpc-split",
-            result.stdout,
-            result.stdout + result.stderr,
-        )
-        self.assertNotIn("FAILED: ", result.stdout, result.stdout + result.stderr)
-
     def test_zmk_build(self):
         self._test_zmk_build(
             {
-                "module_template_board_feature_disabled": ConfigAndDeviceTree(
+                "drv2605l_lab_board_feature_disabled": ConfigAndDeviceTree(
                     config=[
                         'CONFIG_ZMK_KEYBOARD_NAME="Module Test"',
                         "CONFIG_ZMK_USB=y",
                         "CONFIG_ZMK_BLE=y",
-                        "# CONFIG_ZMK_TEMPLATE_FEATURE is not set",
+                        "# CONFIG_ZMK_DRV2605L_LAB is not set",
                     ],
                     device=[
                         "DT_COMPAT_HAS_OKAY_zmk_keymap",
                     ],
                 ),
-                "module_template_board_with_rpc": ConfigAndDeviceTree(
+                "drv2605l_lab_board_with_rpc": ConfigAndDeviceTree(
                     config=[
+                        "CONFIG_HAPTICS=y",
+                        "CONFIG_HAPTICS_DRV2605=y",
                         "CONFIG_ZMK_STUDIO=y",
-                        "CONFIG_ZMK_TEMPLATE_FEATURE=y",
-                        "CONFIG_ZMK_TEMPLATE_FEATURE_STUDIO_RPC=y",
+                        "CONFIG_ZMK_DRV2605L_LAB=y",
+                        "CONFIG_ZMK_DRV2605L_LAB_STUDIO_RPC=y",
                     ],
-                    device=[],
+                    device=["DT_N_ALIAS_drv2605l"],
                 ),
-                "module_template_board_without_rpc": ConfigAndDeviceTree(
+                "drv2605l_lab_board_without_rpc": ConfigAndDeviceTree(
                     config=[
-                        "CONFIG_ZMK_TEMPLATE_FEATURE=y",
+                        "CONFIG_ZMK_DRV2605L_LAB=y",
                         "# CONFIG_ZMK_STUDIO is not set",
-                        NotFound("CONFIG_ZMK_TEMPLATE_FEATURE_STUDIO_RPC"),
+                        NotFound("CONFIG_ZMK_DRV2605L_LAB_STUDIO_RPC"),
                     ],
                     device=[],
                 ),
                 # DUT of the web UI end-to-end test (web/e2e/): as
-                # module_template_board_with_rpc, but unlocked -- see build.yaml.
+                # drv2605l_lab_board_with_rpc, but unlocked -- see build.yaml.
                 "web_e2e": ConfigAndDeviceTree(
                     config=[
                         "CONFIG_ZMK_STUDIO=y",
-                        "CONFIG_ZMK_TEMPLATE_FEATURE_STUDIO_RPC=y",
+                        "CONFIG_ZMK_DRV2605L_LAB_STUDIO_RPC=y",
                         "# CONFIG_ZMK_STUDIO_LOCKING is not set",
                     ],
                     device=[],
@@ -118,8 +102,8 @@ class WestCommandsTests(unittest.TestCase):
                         # Verify that zmk-feature-custom-settings is present and enabled
                         "zmk-feature-custom-settings",
                         "CONFIG_ZMK_STUDIO=y",
-                        "CONFIG_ZMK_TEMPLATE_FEATURE=y",
-                        "CONFIG_ZMK_TEMPLATE_FEATURE_STUDIO_RPC=y",
+                        "CONFIG_ZMK_DRV2605L_LAB=y",
+                        "CONFIG_ZMK_DRV2605L_LAB_STUDIO_RPC=y",
                         "CONFIG_ZMK_CUSTOM_SETTINGS=y",
                         "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC=y",
                         "CONFIG_ZMK_STUDIO_RPC_RX_BUF_SIZE=128",
@@ -136,8 +120,8 @@ class WestCommandsTests(unittest.TestCase):
                 "usb_wired_central": ConfigAndDeviceTree(
                     config=[
                         "CONFIG_ZMK_STUDIO=y",
-                        "CONFIG_ZMK_TEMPLATE_FEATURE=y",
-                        "CONFIG_ZMK_TEMPLATE_FEATURE_STUDIO_RPC=y",
+                        "CONFIG_ZMK_DRV2605L_LAB=y",
+                        "CONFIG_ZMK_DRV2605L_LAB_STUDIO_RPC=y",
                         "CONFIG_ZMK_SPLIT=y",
                         "CONFIG_ZMK_SPLIT_ROLE_CENTRAL=y",
                         "CONFIG_ZMK_USB=y",
@@ -150,7 +134,7 @@ class WestCommandsTests(unittest.TestCase):
                         "CONFIG_ZMK_SPLIT=y",
                         "# CONFIG_ZMK_SPLIT_ROLE_CENTRAL is not set",
                         "# CONFIG_ZMK_STUDIO is not set",
-                        "# CONFIG_ZMK_TEMPLATE_FEATURE is not set",
+                        "# CONFIG_ZMK_DRV2605L_LAB is not set",
                         "# CONFIG_ZMK_BLE is not set",
                     ],
                     device=[],
@@ -165,7 +149,17 @@ class WestCommandsTests(unittest.TestCase):
         for artifact in artifacts_and_expected_build_params.keys():
             shutil.rmtree(self.BUILD_DIR / artifact, ignore_errors=True)
 
-        result = run_west(["zmk-build", "tests/zmk-config", "-q"])
+        result = run_west(
+            [
+                "zmk-build",
+                "tests/zmk-config",
+                "-m",
+                ".",
+                "-d",
+                str(self.BUILD_DIR),
+                "-q",
+            ]
+        )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
         for artifact, entries in artifacts_and_expected_build_params.items():
