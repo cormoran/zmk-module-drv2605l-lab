@@ -59,30 +59,32 @@ describe("App Component", () => {
       render(<App />);
 
       // Scoped to the heading role: the footer's "AI ready ZMK module
-      // template" credit line also matches a plain /ZMK Module Template/i
+      // template" credit line also matches a plain /DRV2605L Haptic Lab/i
       // text query.
       expect(
-        screen.getByRole("heading", { name: /ZMK Module Template/i })
+        screen.getByRole("heading", { name: /DRV2605L Haptic Lab/i })
       ).toBeInTheDocument();
-      expect(screen.getByText(/Custom Studio RPC Demo/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/Test built-in haptic effects/i)
+      ).toBeInTheDocument();
     });
 
     it("should render footer with repo link", () => {
       render(<App />);
 
-      expect(screen.getByText(/Template Module/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/DRV2605L Haptic Lab/i)).toHaveLength(2);
       // In the pristine template, GITHUB_REPO and TEMPLATE_CREDIT_REPO happen
       // to share the same placeholder value -- scripts/init_module.py only
       // rewrites the former (the latter is permanently exempted), so after
       // initialization only one of these links still reads this text.
       const links = screen.getAllByRole("link", {
-        name: "cormoran/zmk-module-template",
+        name: "cormoran/zmk-module-drv2605l-lab",
       });
-      expect(links.length).toBe(2);
+      expect(links.length).toBe(1);
       for (const link of links) {
         expect(link).toHaveAttribute(
           "href",
-          "https://github.com/cormoran/zmk-module-template"
+          "https://github.com/cormoran/zmk-module-drv2605l-lab"
         );
       }
     });
@@ -154,7 +156,7 @@ describe("App Component", () => {
       setTransportSupport({ serial: true, bluetooth: true });
       mocks.mockSuccessfulConnection({
         deviceName: "Test Keyboard",
-        subsystems: ["your_name__template"],
+        subsystems: ["cormoran__drv2605l_lab"],
       });
 
       const { connectSerial } = await import("@cormoran/zmk-studio-react-hook");
@@ -172,14 +174,14 @@ describe("App Component", () => {
       });
 
       expect(screen.getByText(/Disconnect/i)).toBeInTheDocument();
-      expect(screen.getByText(/RPC Test/i)).toBeInTheDocument();
+      expect(screen.getByText(/Haptic control/i)).toBeInTheDocument();
     });
 
     it("should connect to device via Bluetooth when connect button is clicked", async () => {
       setTransportSupport({ serial: true, bluetooth: true });
       mocks.mockSuccessfulConnection({
         deviceName: "Test Keyboard BLE",
-        subsystems: ["your_name__template"],
+        subsystems: ["cormoran__drv2605l_lab"],
       });
 
       const { connect: gattConnect } =
