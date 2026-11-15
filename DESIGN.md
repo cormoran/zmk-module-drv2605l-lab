@@ -23,12 +23,15 @@ responses are bounded protobuf messages:
 
 | Request | Response | Action |
 | --- | --- | --- |
-| GetStatus | Status: present, ready, status register, error code | Probe configured node and read DRV2605L status over I2C |
+| GetStatus | Status: present, ready, status register, playing, error code | Probe configured node and read DRV2605L status and GO registers over I2C |
 | Play: library 1..6, effect 1..123 | Result: error code | Stop current output, configure one ROM sequence entry, start |
 | Stop | Result: error code | Stop output through Zephyr haptics API |
 
 Library 6 is for LRA; libraries 1..5 are for ERM. The firmware validates
-range; the UI describes the actuator match. No arbitrary register writes or
+range and actuator/library match; the UI describes the actuator match. The
+LRA overlay starts with low voltage values, and firmware clears the
+Zephyr driver's LRA open-loop bit before LRA ROM playback to allow resonance
+tracking. No arbitrary register writes or
 continuous RTP are exposed. Calls are short and run synchronously on Studio's
 RPC thread. A static response buffer meets nanopb's delayed encoding rule.
 The existing test config uses 128-byte RX and 64-byte TX buffers; enforce a
@@ -38,6 +41,7 @@ compile-time minimum for the encoded response plus Studio framing.
 
 Keep the template's USB/BLE connection controls. On connection, load status
 once; offer library and effect selection, Play, Stop, and Refresh status.
+Sequential playback polls GetStatus and advances only after GO clears.
 Display firmware error codes and bus/device readiness clearly. The codec must
 remain stable across renders to avoid repeat RPC loads.
 

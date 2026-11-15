@@ -22,6 +22,7 @@ message StatusResponse {
     bool ready = 2;
     uint32 status = 3;
     int32 error_code = 4;
+    bool playing = 5;
 }
 message ResultResponse { int32 error_code = 1; }
 

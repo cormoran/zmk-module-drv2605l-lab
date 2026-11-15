@@ -15,6 +15,10 @@
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #define DRV2605L_STATUS_REG 0x00
+#define DRV2605L_GO_REG 0x0c
+#define DRV2605L_GO_BIT BIT(0)
+#define DRV2605L_CONTROL3_REG 0x1d
+#define DRV2605L_LRA_OPEN_LOOP_BIT BIT(0)
 
 BUILD_ASSERT(CONFIG_ZMK_STUDIO_RPC_TX_BUF_SIZE >= 64,
              "DRV2605L lab requires a 64-byte Studio TX buffer");
@@ -46,14 +50,24 @@ static bool drv2605l_lab_ready(void) {
 #endif
 }
 
-static int drv2605l_lab_status(uint8_t *status) {
+static int drv2605l_lab_status(uint8_t *status, bool *playing) {
 #if DRV2605L_LAB_HAS_DEVICE
     if (!drv2605l_lab_ready()) {
         return -ENODEV;
     }
-    return i2c_reg_read_byte_dt(&drv2605l_i2c, DRV2605L_STATUS_REG, status);
+    int err = i2c_reg_read_byte_dt(&drv2605l_i2c, DRV2605L_STATUS_REG, status);
+    if (err != 0) {
+        return err;
+    }
+    uint8_t go = 0;
+    err = i2c_reg_read_byte_dt(&drv2605l_i2c, DRV2605L_GO_REG, &go);
+    if (err == 0) {
+        *playing = (go & DRV2605L_GO_BIT) != 0;
+    }
+    return err;
 #else
     ARG_UNUSED(status);
+    ARG_UNUSED(playing);
     return -ENODEV;
 #endif
 }
@@ -77,6 +91,9 @@ static int drv2605l_lab_play(uint32_t library, uint32_t effect) {
     if (!drv2605l_lab_ready()) {
         return -ENODEV;
     }
+    if ((DT_ENUM_IDX(DRV2605L_LAB_NODE, actuator_mode) == 1) != (library == 6)) {
+        return -EINVAL;
+    }
 
     int err = haptics_stop_output(drv2605l_device);
     if (err != 0) {
@@ -92,6 +109,14 @@ static int drv2605l_lab_play(uint32_t library, uint32_t effect) {
     err = drv2605_haptic_config(drv2605l_device, DRV2605_HAPTICS_SOURCE_ROM, &data);
     if (err != 0) {
         return err;
+    }
+    /* Zephyr initializes LRA_OPEN_LOOP. Restore auto-resonance for ROM library 6. */
+    if (library == 6) {
+        err = i2c_reg_update_byte_dt(&drv2605l_i2c, DRV2605L_CONTROL3_REG,
+                                     DRV2605L_LRA_OPEN_LOOP_BIT, 0);
+        if (err != 0) {
+            return err;
+        }
     }
     return haptics_start_output(drv2605l_device);
 #else
@@ -117,12 +142,14 @@ static bool drv2605l_lab_rpc_handle_request(const zmk_custom_CallRequest *raw_re
     switch (req.which_request_type) {
     case cormoran_drv2605l_lab_Request_get_status_tag: {
         uint8_t status = 0;
-        int err = drv2605l_lab_status(&status);
+        bool playing = false;
+        int err = drv2605l_lab_status(&status, &playing);
         resp->which_response_type = cormoran_drv2605l_lab_Response_status_tag;
         resp->response_type.status.present = DRV2605L_LAB_HAS_DEVICE;
         resp->response_type.status.ready = drv2605l_lab_ready();
         resp->response_type.status.status = status;
         resp->response_type.status.error_code = err;
+        resp->response_type.status.playing = playing;
         break;
     }
     case cormoran_drv2605l_lab_Request_play_tag:

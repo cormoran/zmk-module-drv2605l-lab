@@ -269,6 +269,7 @@ class RenodeWiredSplitModuleTests(unittest.TestCase):
         self.assertEqual(resp.WhichOneof("response_type"), "status")
         self.assertFalse(resp.status.present)
         self.assertFalse(resp.status.ready)
+        self.assertFalse(resp.status.playing)
         self.assertEqual(resp.status.error_code, -19)  # ENODEV
 
         req = self.lab_pb2.Request()

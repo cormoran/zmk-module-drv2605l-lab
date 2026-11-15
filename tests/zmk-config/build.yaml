@@ -11,6 +11,15 @@ include:
       - studio-rpc-usb-uart
       - drv2605l-lab
 
+  - artifact: drv2605l_lab_lra_with_rpc
+    board: xiao_ble//zmk
+    shield: tester_xiao
+    cmake-args: -DCONFIG_ZMK_STUDIO=y -DCONFIG_ZMK_DRV2605L_LAB=y -DCONFIG_ZMK_DRV2605L_LAB_STUDIO_RPC=y
+    snippets:
+      - studio-rpc-usb-uart
+      - drv2605l-lab
+      - drv2605l-lab-lra
+
   - artifact: drv2605l_lab_board_without_rpc
     board: xiao_ble//zmk
     shield: tester_xiao

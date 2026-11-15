@@ -87,6 +87,18 @@ class WestCommandsTests(unittest.TestCase):
                     ],
                     device=[],
                 ),
+                "drv2605l_lab_lra_with_rpc": ConfigAndDeviceTree(
+                    config=[
+                        "CONFIG_HAPTICS_DRV2605=y",
+                        "CONFIG_ZMK_DRV2605L_LAB_STUDIO_RPC=y",
+                    ],
+                    device=[
+                        "DT_N_ALIAS_drv2605l",
+                        'actuator_mode "LRA"',
+                        "vib_rated_mv 700",
+                        "vib_overdrive_mv 1000",
+                    ],
+                ),
                 # DUT of the web UI end-to-end test (web/e2e/): as
                 # drv2605l_lab_board_with_rpc, but unlocked -- see build.yaml.
                 "web_e2e": ConfigAndDeviceTree(
