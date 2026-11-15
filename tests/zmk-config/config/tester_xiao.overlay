@@ -2,3 +2,27 @@
 &board_cdc_acm_uart {
 	status = "disabled";
 };
+
+/* D5 is SCL, D8 is SDA, and D9 is IN. Keep the test shield off them. */
+&kscan0 {
+    input-gpios
+        = <&xiao_d 0 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>
+        , <&xiao_d 1 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>
+        , <&xiao_d 2 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>
+        , <&xiao_d 3 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>
+        , <&xiao_d 4 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>
+        , <&xiao_d 6 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>
+        , <&xiao_d 7 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>
+        , <&xiao_d 10 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>
+        ;
+};
+
+#undef RC
+#include <dt-bindings/zmk/matrix_transform.h>
+&transform0 {
+    columns = <8>;
+    map = <
+        RC(0,0) RC(0,1) RC(0,2) RC(0,3) RC(0,4)
+        RC(0,5) RC(0,6) RC(0,7)
+    >;
+};

@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package cormoran.drv2605l_lab;
+
+message GetStatusRequest {}
+message PlayRequest {
+    uint32 library = 1;
+    uint32 effect = 2;
+}
+message StopRequest {}
+
+message Request {
+    oneof request_type {
+        GetStatusRequest get_status = 1;
+        PlayRequest play = 2;
+        StopRequest stop = 3;
+    }
+}
+
+message StatusResponse {
+    bool present = 1;
+    bool ready = 2;
+    uint32 status = 3;
+    int32 error_code = 4;
+    bool playing = 5;
+}
+message ResultResponse { int32 error_code = 1; }
+
+message Response {
+    oneof response_type {
+        StatusResponse status = 1;
+        ResultResponse result = 2;
+    }
+}

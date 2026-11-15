@@ -1,4 +1,7 @@
 build/
+build-firmware/
+build-firmware-tests/
+build-pincheck/
 dependencies
 __pycache__/
 .vscode/*

@@ -1,26 +1,35 @@
-import { useContext, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import "./App.css";
 import { connect as gattConnect } from "@zmkfirmware/zmk-studio-ts-client/transport/gatt";
 import {
   ZMKConnection,
   ZMKAppContext,
-  useStudioLockState,
-  isUnlockRequiredError,
   isWebSerialSupported,
   isWebBluetoothSupported,
   useCustomSubsystem,
   connectSerial,
 } from "@cormoran/zmk-studio-react-hook";
-import { Request, Response } from "./proto/your-name/template/template";
+import { Request, Response } from "./proto/cormoran/drv2605l-lab/drv2605l_lab";
 
-export const SUBSYSTEM_IDENTIFIER = "your_name__template";
+export const SUBSYSTEM_IDENTIFIER = "cormoran__drv2605l_lab";
+
+// useCustomSubsystem uses codec identity to memoize its call function.
+const codec = {
+  encode: (request: Request) => Request.encode(request).finish(),
+  decode: Response.decode,
+};
+
+const STATUS_POLL_MS = 50;
+const EFFECT_TIMEOUT_MS = 10_000;
+
+type SequenceToken = { cancelled: boolean; unmounted: boolean };
 
 // Template placeholder: `scripts/init_module.py` rewrites this literal to
 // `{owner}/{repo}`. Never write the full
 // `...-with-custom-studio-rpc` repo name in a URL built from this constant --
 // the replacement targets this exact string first, which would otherwise
 // leave the owner unreplaced.
-export const GITHUB_REPO = "cormoran/zmk-module-template";
+export const GITHUB_REPO = "cormoran/zmk-module-drv2605l-lab";
 
 // Unlike GITHUB_REPO above, this always credits the original template
 // project, regardless of which repo this module was forked into. The
@@ -33,8 +42,8 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>🔧 ZMK Module Template</h1>
-        <p>Custom Studio RPC Demo</p>
+        <h1>DRV2605L Haptic Lab</h1>
+        <p>Test built-in haptic effects through ZMK Studio</p>
       </header>
 
       <ZMKConnection
@@ -101,14 +110,14 @@ function App() {
               </button>
             </section>
 
-            <RPCTestSection />
+            <HapticLabSection />
           </>
         )}
       />
 
       <footer className="app-footer">
         <p>
-          <strong>Template Module</strong> - Customize this for your ZMK module
+          <strong>DRV2605L Haptic Lab</strong>
         </p>
         <p>
           <a
@@ -142,63 +151,181 @@ function App() {
   );
 }
 
-export function RPCTestSection() {
+export function HapticLabSection() {
   const zmkApp = useContext(ZMKAppContext);
-  const { ready, subsystem, call } = useCustomSubsystem(SUBSYSTEM_IDENTIFIER, {
-    encode: (r: Request) => Request.encode(r).finish(),
-    decode: Response.decode,
-  });
-  const { locked } = useStudioLockState();
-  const [inputValue, setInputValue] = useState<number>(42);
-  const [response, setResponse] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [awaitingUnlock, setAwaitingUnlock] = useState(false);
+  const { ready, subsystem, call } = useCustomSubsystem(
+    SUBSYSTEM_IDENTIFIER,
+    codec
+  );
+  const subsystemIndex = subsystem?.index;
+  const [library, setLibrary] = useState(1);
+  const [effect, setEffect] = useState(1);
+  const [status, setStatus] = useState<Response["status"] | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [sequenceRunning, setSequenceRunning] = useState(false);
+  const [sequenceStopping, setSequenceStopping] = useState(false);
+  const [sequenceEffect, setSequenceEffect] = useState<number | null>(null);
+  const sequenceRef = useRef<SequenceToken | null>(null);
+  const sequencePromiseRef = useRef<Promise<void> | null>(null);
 
-  const sendSampleRequest = async () => {
-    if (!ready) return;
+  useEffect(() => {
+    return () => {
+      if (sequenceRef.current) {
+        sequenceRef.current.cancelled = true;
+        sequenceRef.current.unmounted = true;
+      }
+    };
+  }, []);
 
-    setIsLoading(true);
-    setResponse(null);
-
+  const refreshStatus = useCallback(async () => {
+    if (!ready || subsystemIndex === undefined) return;
+    setBusy(true);
+    setMessage(null);
     try {
-      const resp = await call({ sample: { value: inputValue } });
-      setAwaitingUnlock(false);
-      console.log("Decoded response:", resp);
-
-      if (resp?.sample) {
-        setResponse(resp.sample.value);
-      } else if (resp?.error) {
-        setResponse(`Error: ${resp.error.message}`);
-      }
+      const response = await call({ getStatus: {} });
+      if (!response?.status) throw new Error("Unexpected status response");
+      setStatus(response.status);
     } catch (error) {
-      if (isUnlockRequiredError(error)) {
-        setAwaitingUnlock(true);
-      } else {
-        console.error("RPC call failed:", error);
-        setResponse(
-          `Failed: ${error instanceof Error ? error.message : "Unknown error"}`
-        );
-      }
+      setMessage(
+        `Status request failed: ${error instanceof Error ? error.message : String(error)}`
+      );
     } finally {
-      setIsLoading(false);
+      setBusy(false);
+    }
+  }, [ready, subsystemIndex, call]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void refreshStatus(), 0);
+    return () => window.clearTimeout(timer);
+  }, [refreshStatus]);
+
+  const runAction = async (action: "play" | "stop") => {
+    if (!ready || busy || sequenceStopping || sequenceRef.current) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const request =
+        action === "play" ? { play: { library, effect } } : { stop: {} };
+      const response = await call(request);
+      if (!response?.result) throw new Error("Unexpected action response");
+      setMessage(
+        response.result.errorCode === 0
+          ? `${action === "play" ? "Play" : "Stop"} succeeded.`
+          : `${action === "play" ? "Play" : "Stop"} failed: firmware error ${response.result.errorCode}.`
+      );
+    } catch (error) {
+      setMessage(
+        `${action === "play" ? "Play" : "Stop"} request failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      setBusy(false);
     }
   };
 
-  // Auto-retry once the device reports it's unlocked again -- covers the
-  // common case where the user presses &studio_unlock after seeing the
-  // prompt below without needing to click "Retry" themselves.
-  useEffect(() => {
-    if (awaitingUnlock && !locked) {
-      // This mirrors an external system (the device's lock state) rather
-      // than deriving from props/state, so a direct setState here is
-      // intentional -- see react-hooks/set-state-in-effect's rationale (same
-      // pattern used by useStudioLockState itself).
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setAwaitingUnlock(false);
-      void sendSampleRequest();
+  const startSequence = () => {
+    if (!ready || busy || sequenceStopping || sequenceRef.current) return;
+    const token: SequenceToken = { cancelled: false, unmounted: false };
+    sequenceRef.current = token;
+    setSequenceRunning(true);
+    setMessage(null);
+    const selectedLibrary = library;
+
+    const sequence = (async () => {
+      try {
+        for (let nextEffect = 1; nextEffect <= 123; nextEffect++) {
+          if (token.cancelled) return;
+          setSequenceEffect(nextEffect);
+          const playResponse = await call({
+            play: { library: selectedLibrary, effect: nextEffect },
+          });
+          if (token.cancelled) return;
+          if (!playResponse?.result)
+            throw new Error("Unexpected Play response");
+          if (playResponse.result.errorCode !== 0) {
+            throw new Error(
+              `Play effect ${nextEffect}: firmware error ${playResponse.result.errorCode}`
+            );
+          }
+
+          const startedAt = Date.now();
+          while (!token.cancelled) {
+            await new Promise((resolve) =>
+              window.setTimeout(resolve, STATUS_POLL_MS)
+            );
+            if (token.cancelled) return;
+            const statusResponse = await call({ getStatus: {} });
+            if (token.cancelled) return;
+            if (!statusResponse?.status)
+              throw new Error("Unexpected status response");
+            setStatus(statusResponse.status);
+            if (statusResponse.status.errorCode !== 0) {
+              throw new Error(
+                `Status for effect ${nextEffect}: firmware error ${statusResponse.status.errorCode}`
+              );
+            }
+            if (!statusResponse.status.playing) break;
+            if (Date.now() - startedAt >= EFFECT_TIMEOUT_MS) {
+              throw new Error(
+                `Effect ${nextEffect} did not finish within 10 seconds`
+              );
+            }
+          }
+        }
+        if (!token.cancelled)
+          setMessage("Sequence complete: 123 effects played.");
+      } catch (error) {
+        if (!token.cancelled) {
+          setMessage(
+            `Sequence stopped: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      } finally {
+        if (sequenceRef.current === token) {
+          sequenceRef.current = null;
+          sequencePromiseRef.current = null;
+        }
+        if (!token.unmounted) {
+          setSequenceRunning(false);
+          setSequenceEffect(null);
+        }
+      }
+    })();
+    sequencePromiseRef.current = sequence;
+  };
+
+  const stopOutput = async () => {
+    if (!ready || busy || sequenceStopping) return;
+    const token = sequenceRef.current;
+    if (token) {
+      token.cancelled = true;
+      setSequenceStopping(true);
+      setMessage("Stopping sequence…");
+      // Wait for the current RPC to settle before issuing Stop. Studio calls
+      // are serialized so Stop cannot overtake a pending Play or status read.
+      await sequencePromiseRef.current;
+      if (token.unmounted) return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locked]);
+    setBusy(true);
+    try {
+      const response = await call({ stop: {} });
+      if (!response?.result) throw new Error("Unexpected Stop response");
+      setMessage(
+        response.result.errorCode === 0
+          ? token
+            ? "Sequence stopped."
+            : "Stop succeeded."
+          : `Stop failed: firmware error ${response.result.errorCode}.`
+      );
+    } catch (error) {
+      setMessage(
+        `Stop request failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      setBusy(false);
+      setSequenceStopping(false);
+    }
+  };
 
   if (!zmkApp) return null;
 
@@ -208,7 +335,7 @@ export function RPCTestSection() {
         <div className="warning-message">
           <p>
             ⚠️ Subsystem "{SUBSYSTEM_IDENTIFIER}" not found. Make sure your
-            firmware includes the template module. See the{" "}
+            firmware includes the drv2605l-lab module. See the{" "}
             <a href={`https://github.com/${GITHUB_REPO}#readme`}>
               module README
             </a>{" "}
@@ -221,51 +348,116 @@ export function RPCTestSection() {
 
   return (
     <section className="card">
-      <h2>RPC Test</h2>
-      <p>Send a sample request to the firmware:</p>
-
-      {locked && (
-        <div className="locked-banner">
-          <p>🔒 ZMK Studio is locked.</p>
-        </div>
-      )}
-
-      <div className="input-group">
-        <label htmlFor="value-input">Value:</label>
-        <input
-          id="value-input"
-          type="number"
-          value={inputValue}
-          onChange={(e) => setInputValue(parseInt(e.target.value) || 0)}
-        />
+      <h2>Haptic control</h2>
+      <div className="status-panel" aria-live="polite">
+        <h3>Device status</h3>
+        {!status && (
+          <p>{busy ? "Reading device status…" : "Status unavailable."}</p>
+        )}
+        {status && (
+          <>
+            <p>Device: {status.present ? "configured" : "not configured"}</p>
+            <p>Bus: {status.ready ? "ready" : "unavailable"}</p>
+            <p>
+              Status register: 0x{status.status.toString(16).padStart(2, "0")}
+            </p>
+            <p>Firmware error code: {status.errorCode}</p>
+            <p>Output: {status.playing ? "playing" : "idle"}</p>
+          </>
+        )}
+        <button
+          className="btn btn-secondary"
+          disabled={!ready || busy || sequenceRunning || sequenceStopping}
+          onClick={() => void refreshStatus()}
+        >
+          Refresh status
+        </button>
       </div>
 
-      <button
-        className="btn btn-primary"
-        disabled={isLoading || locked}
-        onClick={sendSampleRequest}
-      >
-        {isLoading ? "⏳ Sending..." : "📤 Send Request"}
-      </button>
-
-      {awaitingUnlock && (
-        <div className="unlock-prompt card">
-          <p>
-            🔒 ZMK Studio is locked. Press the unlock key (
-            <code>&amp;studio_unlock</code> behavior) on your keyboard — the
-            request will retry automatically.
+      <div className="input-group">
+        <label htmlFor="library-input">ROM library</label>
+        <select
+          id="library-input"
+          value={library}
+          disabled={sequenceRunning || sequenceStopping}
+          onChange={(event) => setLibrary(Number(event.target.value))}
+        >
+          {[1, 2, 3, 4, 5, 6].map((value) => (
+            <option key={value} value={value}>
+              {value}
+            </option>
+          ))}
+        </select>
+      </div>
+      <p className="hint-message">
+        Libraries 1–5 are for ERM actuators; library 6 is for LRA.
+      </p>
+      <div className="input-group">
+        <label htmlFor="effect-input">ROM effect (1–123)</label>
+        <input
+          id="effect-input"
+          type="number"
+          min="1"
+          max="123"
+          step="1"
+          value={effect}
+          disabled={sequenceRunning || sequenceStopping}
+          onChange={(event) => setEffect(Number(event.target.value))}
+        />
+      </div>
+      <div className="action-buttons">
+        <button
+          className="btn btn-primary"
+          disabled={
+            !ready ||
+            busy ||
+            sequenceRunning ||
+            sequenceStopping ||
+            !Number.isInteger(effect) ||
+            effect < 1 ||
+            effect > 123
+          }
+          onClick={() => void runAction("play")}
+        >
+          Play
+        </button>
+        <button
+          className="btn btn-secondary"
+          disabled={!ready || busy || sequenceStopping}
+          onClick={() => void stopOutput()}
+        >
+          Stop
+        </button>
+      </div>
+      <div className="sequence-panel">
+        <h3>Sequential playback</h3>
+        <p>
+          Play ROM effects 1 through 123 in order with the selected library.
+          Each effect must finish before the next starts.
+        </p>
+        <button
+          className="btn btn-primary"
+          disabled={!ready || busy || sequenceRunning || sequenceStopping}
+          onClick={startSequence}
+        >
+          Start sequence
+        </button>
+        {sequenceRunning && (
+          <p
+            role="progressbar"
+            aria-valuemin={1}
+            aria-valuemax={123}
+            aria-valuenow={sequenceEffect ?? 1}
+          >
+            Effect {sequenceEffect ?? 1} of 123
+            {sequenceStopping ? " — stopping…" : ""}
           </p>
-          <button className="btn btn-secondary" onClick={sendSampleRequest}>
-            Retry
-          </button>
-        </div>
-      )}
-
-      {response && (
-        <div className="response-box">
-          <h3>Response from Firmware:</h3>
-          <pre>{response}</pre>
-        </div>
+        )}
+      </div>
+      {message && (
+        <p role="status" className="response-box">
+          {message}
+        </p>
       )}
     </section>
   );

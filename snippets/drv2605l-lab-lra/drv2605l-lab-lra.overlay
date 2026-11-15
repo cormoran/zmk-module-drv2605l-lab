@@ -1,0 +1,6 @@
+/* Apply after drv2605l-lab for an LRA test setup. Check the actual motor rating. */
+&haptic {
+    actuator-mode = "LRA";
+    vib-rated-mv = <700>;
+    vib-overdrive-mv = <1000>;
+};

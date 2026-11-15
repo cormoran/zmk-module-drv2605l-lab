@@ -1,236 +1,113 @@
-# cormoran's ZMK Module Template for ZMK (with Custom Studio RPC)
+# DRV2605L lab for ZMK
 
-![ZMK Version](https://img.shields.io/badge/ZMK-master-blue)
-[![Test](https://github.com/cormoran/zmk-module-template/actions/workflows/zmk-module.yml/badge.svg?branch=main)](https://github.com/cormoran/zmk-module-template/actions/workflows/zmk-module.yml) [![Devcontainer](https://github.com/cormoran/zmk-module-template/actions/workflows/devcontainer.yml/badge.svg?branch=main)](https://github.com/cormoran/zmk-module-template/actions/workflows/devcontainer.yml)
+A bench module for trying the DRV2605L's built-in haptic effects from a
+browser. It uses Zephyr's DRV2605 driver and ZMK's custom Studio RPC. The
+browser can check device status, choose a ROM library and effect, play it, stop
+it, and step through a selected library. No keyboard behavior or automatic key
+feedback is included.
 
-This repository contains a template for a ZMK module with Web UI using the **unofficial** custom ZMK Studio RPC protocol.
+This module needs [cormoran/ZMK's `main+custom-studio-protocol` branch](https://github.com/cormoran/zmk/tree/main+custom-studio-protocol).
+The browser UI needs Chrome or Edge on HTTPS or localhost for Web Serial or
+Web Bluetooth. USB is the simplest route for a bench setup.
 
-It's extended from ZMK official template with [zmk-west-commands](https://github.com/cormoran/zmk-west-commands), test code template, coding agent support, and custom Studio RPC protocol support.
+## Wiring: XIAO nRF52840 example
 
-## Summary
+| XIAO | DRV2605L board |
+| --- | --- |
+| 3V3 | VIN |
+| GND | GND |
+| D8 / SDA | SDA |
+| D5 / SCL | SCL |
+| D9 | IN |
 
-This template includes:
+The example devicetree snippet sets I2C1 to D8/D5 and expects I2C address
+`0x5a`. It configures D9 as the IN trigger output; ROM playback currently
+uses I2C's internal trigger, so IN remains inactive during Play. Connect the
+actuator to the DRV2605L output, following the breakout board's instructions.
+The base snippet is an **ERM** example using ROM libraries 1–5. For an LRA,
+add the `drv2605l-lab-lra` snippet and choose library 6 in the UI. This
+companion snippet selects LRA mode and starts at low 700/1000 mV
+rated/clamp settings. Set `vib-rated-mv` and `vib-overdrive-mv` from the
+**actual actuator's** specification before raising them; the ERM example's
+3000/3300 mV values may be too high for a small LRA. If the breakout
+exposes EN, keep it high or add `en-gpios` to the device node. The driver
+needs working I2C pull-ups, usually provided by the breakout.
 
-- **Firmware**: Sample custom Studio RPC handler (`src/studio/template_handler.c`)
-- **Protocol**: Protobuf definition (`proto/your-name/template/template.proto`)
-- **Web UI**: React + TypeScript app (`web/`) using [@cormoran/zmk-studio-react-hook](https://github.com/cormoran/react-zmk-studio)
-- **Tests**: Firmware unit tests (`tests/studio/`) and build tests (`tests/zmk-config/`)
+ALPS Alpine describes its [haptic reactor](https://tech.alpsalpine.com/e/info/haptic/hapticreactor/)
+as an LRA, with substantially different voltage and resonant-frequency
+ratings across its AFT, AFR, and AFDU families. A [Joy-Con 2 teardown](https://www.4gamer.net/games/990/G999030/20250609106/)
+reports the marking `B011AF1185`, but found no matching public Alps Alpine
+model or rating. The ERM configuration
+and ERM ROM libraries are therefore the wrong starting point for a confirmed
+ALPS haptic reactor. The Zephyr DRV2605 driver also enables LRA open-loop mode
+at initialization; this module clears that bit before playing LRA ROM effects
+so the DRV2605L can track the actuator's resonance, as described in the
+[TI datasheet](https://www.ti.com/lit/ds/symlink/drv2605l.pdf). This is a
+test setup, not proof that every Switch 2 motor is compatible. Confirm the
+part number, coil rating, wiring, and physical motion on the actual hardware.
 
-Read through the [ZMK Module Creation](https://zmk.dev/docs/development/module-creation) page for details on how to configure this template.
+## Add to firmware
 
-## More Info
+Add the module and patched ZMK to `config/west.yml`:
 
-For more info on modules, you can read through through the [Zephyr modules page](https://docs.zephyrproject.org/3.5.0/develop/modules.html) and [ZMK's page on using modules](https://zmk.dev/docs/features/modules). [Zephyr's west manifest page](https://docs.zephyrproject.org/3.5.0/develop/west/manifest.html#west-manifests) may also be of use.
-
-## Module User Guide
-
-1. Add dependency to your `config/west.yml`. Note: this module requires a patched ZMK with custom Studio RPC support.
-
-   ```yml
-   manifest:
-       remotes:
-           ...
-           - name: cormoran
-           url-base: https://github.com/cormoran
-       projects:
-           ...
-           - name: zmk-module-template
-           remote: cormoran
-           revision: main+custom-studio-protocol # or latest commit hash
-           import: true
-           ...
-           # Required: patched ZMK with custom Studio RPC support
-           - name: zmk
-           remote: cormoran
-           revision: main+custom-studio-protocol
-           import:
-               file: app/west.yml
-   ```
-
-2. Enable flags in your `config/<shield>.conf`
-
-   ```conf
-   CONFIG_ZMK_TEMPLATE_FEATURE=y
-
-   # Optionally enable custom Studio RPC
-   CONFIG_ZMK_STUDIO=y
-   CONFIG_ZMK_TEMPLATE_FEATURE_STUDIO_RPC=y
-   CONFIG_ZMK_CUSTOM_SETTINGS=y
-   CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC=y
-   CONFIG_ZMK_STUDIO_RPC_RX_BUF_SIZE=128
-   CONFIG_ZMK_LOW_PRIORITY_THREAD_STACK_SIZE=2048
-   ```
-
-3. Implement your custom protocol by editing:
-   - `proto/your-name/template/template.proto` — message types
-   - `src/studio/template_handler.c` — firmware RPC handler
-   - `web/src/App.tsx` — web UI
-
-### Web UI
-
-See [web/README.md](./web/README.md) for web UI development instructions.
-
-### Publishing Web UI
-
-**GitHub Pages**: Merge a pull request into `main+custom-studio-protocol` to deploy to `https://<account>.github.io/<repo>/`.
-
-**Cloudflare Workers (PR previews)**: Configure `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets. Previews are optional — when the secrets are absent (e.g. a fresh repo created from this template), the workflow stays green and simply comments on the PR explaining how to enable them instead of deploying.
-
-## Module Development Guide
-
-### Initialize from template
-
-Right after creating a repository from this template, run the initialization
-script and follow the checklist in [AGENTS.md](./AGENTS.md):
-
-```bash
-python3 scripts/init_module.py --namespace <your-github-name> --module <feature-name>
+```yaml
+manifest:
+  remotes:
+    - name: cormoran
+      url-base: https://github.com/cormoran
+  projects:
+    - name: zmk
+      remote: cormoran
+      revision: main+custom-studio-protocol
+      import: app/west.yml
+    - name: zmk-module-drv2605l-lab
+      remote: cormoran
+      revision: main
+      import: true
 ```
 
-It replaces every template placeholder (identifiers, paths, URLs, artifact
-names) and verifies nothing is left (`--verify-only` re-checks at any time).
+Add these options to the relevant `.conf` file:
 
-### Setup for running test
-
-#### Option0: Dev container (recommended)
-
-Open this repository in VS Code with the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers). The container automatically initializes the west workspace using the isolated layout.
-
-#### Option1: west workspace directory layout
-
-Set west topdir as parent of repository root and download dependencies under `../`.
-This layout is useful to reduce disk usage by sharing dependencies with other zephyr modules.
-The build result is located in `../build`.
-
-```bash
-mkdir west-workspace
-cd west-workspace # this directory becomes west workspace root (topdir)
-git clone <this repository>
-# rm -r .west # if exists to reset workspace
-west init -l . --mf west/west-test-workspace.yml
-west update --narrow
-west zephyr-export
+```conf
+CONFIG_ZMK_STUDIO=y
+CONFIG_ZMK_DRV2605L_LAB=y
+CONFIG_ZMK_DRV2605L_LAB_STUDIO_RPC=y
+CONFIG_HAPTICS=y
+CONFIG_HAPTICS_DRV2605=y
+CONFIG_ZMK_STUDIO_RPC_RX_BUF_SIZE=128
 ```
 
-#### Option2: isolated directory layout
+Add the `drv2605l-lab` snippet to the build target (or copy its overlay into
+your board configuration). For the example XIAO build, use
+`-S drv2605l-lab -S studio-rpc-usb-uart`; for an LRA add
+`-S drv2605l-lab-lra` and select library 6. The generic device overlay and
+sample configuration are under `snippets/drv2605l-lab/`. Adapt the I2C bus,
+GPIO, and voltage settings to your board and actuator. The test-only XIAO
+shield pin workaround is under `tests/zmk-config/config/`.
 
-Set west topdir as repository root and download dependencies under `./dependencies`.
-This layout is useful if you don't want to share dependencies to other zephyr modules.
-Dev container and github actions uses this layout.
-The build result is located in `./build`.
+## Use the browser UI
 
-```bash
-git clone <this repository>
-cd <cloned directory>
-# Idempotent helper shared with the devcontainer and CI: runs
-# `west init -l west --mf west-test-isolated.yml`, `west update --narrow`,
-# and `west zephyr-export`.
-bash scripts/setup_workspace.sh
+Run the UI locally:
+
+```sh
+cd web
+NPM_CONFIG_ALLOW_GIT=all npm ci
+npm run dev
 ```
 
-### Pre-commit
+Open the localhost URL in Chrome or Edge. Connect by USB, press **Refresh**
+to verify the DRV2605L is ready, select a library and effect, then press
+**Play**. **Start sequence** steps through effects 1–123, waiting for the
+DRV2605L GO bit to clear after each one. **Stop** cancels the sequence and
+clears a running effect. A missing device or I2C failure is
+shown as an error. For Bluetooth, ZMK Studio may require an unlock behavior;
+USB with the example snippet is recommended for initial tests.
 
-Every commit need to pass pre-commit verification. The verification contains formatting code and running tests.
+## Development
 
-```
-pip install pre-commit
-pre-commit install
-
-# Run pre-commit manually
-pre-commit run --all-files
-# Run for git staged files
-pre-commit run
-```
-
-### Running Test
-
-```bash
-# Run unit test + build test and verify the results
-python3 -m unittest
-# Run build test directly
-west zmk-build tests/zmk-config
-# Run unit test directly
-west zmk-test tests -m .
-# Run web tests
-cd web && npm test
-```
-
-### Hardware-free Renode testing
-
-CI boots the firmware in the [Renode](https://renode.io/) emulator (a `Build`
-job step) and runs `tests/renode/` -- `renode_test.py` is the file a module
-built from this template rewrites for its own RPC surface. It uses
-`west zmk-renode-test`'s **`wired-split`** mode: a wired split pair whose central
-answers Studio RPC over the emulated **USB CDC** while the wired split link
-forwards key events, covering both the central-only Studio path and the split
-path. The ELFs are the `usb_wired_central` / `usb_wired_peripheral` artifacts in
-`tests/zmk-config/build.yaml`. Locally:
-
-```bash
-west zmk-build tests/zmk-config -af usb_wired_central
-west zmk-build tests/zmk-config -af usb_wired_peripheral
-west zmk-renode-test tests/renode --mode wired-split \
-    --elf build/usb_wired_central/zephyr/zmk.elf \
-    --peripheral-elf build/usb_wired_peripheral/zephyr/zmk.elf
-```
-
-The module's own split-relay *sample* (the central forwarding a value to the
-peripheral) is not exercised here -- ZMK's relay-over-wired transport is newer
-than this repo's pinned zmk, so it is covered by the BabbleSim BLE test instead
-(see below). Details (the mode + `ZMK_RENODE_*` env contract): see
-[zmk-west-commands' README, `west zmk-renode-test`](https://github.com/cormoran/zmk-west-commands#west-zmk-renode-test)
-and [docs/renode-testing.md](https://github.com/cormoran/zmk-west-commands/blob/main/docs/renode-testing.md).
-
-### Web UI end-to-end testing
-
-`web/e2e/` runs the **web UI itself**, in a headless browser, against this
-module's **real firmware** in Renode -- no hardware (CI's `Web UI E2E Test`
-workflow). `west zmk-web-e2e` boots the DUT, serves its Studio RPC (over the
-emulated USB CDC) to the browser and hands the test a `navigator.serial` shim,
-so the app, its transport, the RPC framing and the firmware are all real -- only
-the browser's serial driver is faked. `rpc.spec.ts` connects through the app's
-own button and round-trips the module's custom RPC; rewrite its assertions for
-your own requests. Locally:
-
-```bash
-west zmk-build tests/zmk-config -af web_e2e
-west zmk-web-e2e --elf build/web_e2e/zephyr/zmk.elf -- npm --prefix web run e2e
-```
-
-The DUT (the `web_e2e` artifact) is the real `studio-rpc-usb-uart` image with
-Studio locking off -- an emulator has no key to press `&studio_unlock` with.
-Details (the shim's permission model, the `ZMK_WEB_E2E_*` env contract,
-debugging): see
-[zmk-west-commands' docs/zmk-web-e2e.md](https://github.com/cormoran/zmk-west-commands/blob/main/docs/zmk-web-e2e.md).
-
-### Running BLE (BabbleSim) tests
-
-`tests/ble/` runs real `nrf52_bsim` firmware on a simulated radio (x86 Linux
-only; CI's `ble-test` job). The one case, `studio/custom-rpc-split`, checks --
-in a split central+peripheral topology -- that the custom Studio RPC answers
-over the BLE GATT transport while the split link is active, AND that the
-split-relay sample delivers the RPC value to the peripheral (asserted via the
-peripheral's log line). The Studio host side is one declarative
-`studio_requests.json` -- no host C code in this module. Locally:
-
-```bash
-west zmk-ble-test tests/ble -m .   # --auto-accept regenerates snapshots
-```
-
-Details (case-file conventions, JSON DSL, `{prefix}`/`{studio_host}`,
-BabbleSim setup, peripheral assertion): see
-[zmk-west-commands' README, `west zmk-ble-test`](https://github.com/cormoran/zmk-west-commands#west-zmk-ble-test).
-
-### Sync changes from template
-
-Run `Actions > Sync Changes in Template > Run workflow` to get the latest template changes as a pull request.
-
-If the template contains changes in `.github/workflows/*`, register a GitHub personal access token as `GH_TOKEN` repository secret (`repo` + `workflow` scopes).
-
-### Coding agent on actions
-
-Actions for github copilot and claude are available.
-
-- Mention `@copilot`
-- Setup `ANTHROPIC_API_KEY` secret and mention `@claude`
-  - Or fix [claude.yml](./github/workflows/claude.yml) to use `CLAUDE_CODE_OAUTH_TOKEN`
+The complete test manifest is `west/west-test-isolated.yml`. In a compatible
+West workspace, run `west zmk-build tests/zmk-config -m . -d ./build -q`,
+`west zmk-test tests -m . -d ./build`, and the web checks in `web/README.md`.
+`DESIGN.md` records the RPC and hardware decisions. Actual vibration and
+voltage safety must be checked with the connected actuator; firmware and web
+tests cannot prove motor behavior.

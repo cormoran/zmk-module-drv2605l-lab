@@ -79,35 +79,6 @@ jobs:
           peripheral-elf: build/usb_wired_peripheral/zephyr/zmk.elf
           tests: tests/renode
 
-  ble-test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    container:
-      image: zmkfirmware/zmk-build-arm:4.1
-    name: BLE (BabbleSim) Test
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - uses: ./.github/actions/west-init
-      # Runs the BabbleSim BLE tests via zmk-west-commands' zmk-ble-test action:
-      # it enables the +babblesim west group, fetches + `make`s (and caches) the
-      # bsim tree, installs protobuf/protoc for the studio_requests.json DSL,
-      # exports BSIM_OUT_PATH/BSIM_COMPONENTS_PATH, and runs `west zmk-ble-test`.
-      # Keep the ref in sync with the zmk-west-commands revision in
-      # west/west-dependency/west-test-dependency.yml and the renode action
-      # ref above.
-      - uses: cormoran/zmk-west-commands/.github/actions/zmk-ble-test@main
-        with:
-          tests: tests/ble
-          module: .
-      - name: Upload logs
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ble-test-logs
-          path: |
-            build/ble/**/*.log
-
   keepalive:
     if: github.event_name == 'schedule'
     permissions:

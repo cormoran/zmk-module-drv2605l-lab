@@ -1,0 +1,3 @@
+name: drv2605l-lab-lra
+append:
+  EXTRA_DTC_OVERLAY_FILE: drv2605l-lab-lra.overlay

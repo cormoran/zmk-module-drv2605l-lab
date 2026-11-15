@@ -1,0 +1,46 @@
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
+
+/ {
+    aliases {
+        drv2605l = &haptic;
+    };
+};
+
+&pinctrl {
+    drv2605l_i2c_default: drv2605l_i2c_default {
+        group1 {
+            psels = <NRF_PSEL(TWIM_SDA, 1, 13)>,
+                    <NRF_PSEL(TWIM_SCL, 0, 5)>;
+        };
+    };
+
+    drv2605l_i2c_sleep: drv2605l_i2c_sleep {
+        group1 {
+            psels = <NRF_PSEL(TWIM_SDA, 1, 13)>,
+                    <NRF_PSEL(TWIM_SCL, 0, 5)>;
+            low-power-enable;
+        };
+    };
+};
+
+&i2c1 {
+    status = "okay";
+    pinctrl-0 = <&drv2605l_i2c_default>;
+    pinctrl-1 = <&drv2605l_i2c_sleep>;
+    pinctrl-names = "default", "sleep";
+    haptic: drv2605@5a {
+        compatible = "ti,drv2605";
+        reg = <0x5a>;
+        status = "okay";
+        actuator-mode = "ERM";
+        vib-rated-mv = <3000>;
+        vib-overdrive-mv = <3300>;
+        in-trig-gpios = <&xiao_d 9 GPIO_ACTIVE_HIGH>;
+    };
+};
+
+/* XIAO D8 is also the default SPI2 SCK pin. */
+&spi2 {
+    status = "disabled";
+};
