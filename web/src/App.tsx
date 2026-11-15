@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import "./App.css";
 import { connect as gattConnect } from "@zmkfirmware/zmk-studio-ts-client/transport/gatt";
 import {
@@ -18,6 +18,11 @@ const codec = {
   encode: (request: Request) => Request.encode(request).finish(),
   decode: Response.decode,
 };
+
+const STATUS_POLL_MS = 50;
+const EFFECT_TIMEOUT_MS = 10_000;
+
+type SequenceToken = { cancelled: boolean; unmounted: boolean };
 
 // Template placeholder: `scripts/init_module.py` rewrites this literal to
 // `{owner}/{repo}`. Never write the full
@@ -158,6 +163,20 @@ export function HapticLabSection() {
   const [status, setStatus] = useState<Response["status"] | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [sequenceRunning, setSequenceRunning] = useState(false);
+  const [sequenceStopping, setSequenceStopping] = useState(false);
+  const [sequenceEffect, setSequenceEffect] = useState<number | null>(null);
+  const sequenceRef = useRef<SequenceToken | null>(null);
+  const sequencePromiseRef = useRef<Promise<void> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (sequenceRef.current) {
+        sequenceRef.current.cancelled = true;
+        sequenceRef.current.unmounted = true;
+      }
+    };
+  }, []);
 
   const refreshStatus = useCallback(async () => {
     if (!ready || subsystemIndex === undefined) return;
@@ -182,7 +201,7 @@ export function HapticLabSection() {
   }, [refreshStatus]);
 
   const runAction = async (action: "play" | "stop") => {
-    if (!ready || busy) return;
+    if (!ready || busy || sequenceStopping || sequenceRef.current) return;
     setBusy(true);
     setMessage(null);
     try {
@@ -201,6 +220,110 @@ export function HapticLabSection() {
       );
     } finally {
       setBusy(false);
+    }
+  };
+
+  const startSequence = () => {
+    if (!ready || busy || sequenceStopping || sequenceRef.current) return;
+    const token: SequenceToken = { cancelled: false, unmounted: false };
+    sequenceRef.current = token;
+    setSequenceRunning(true);
+    setMessage(null);
+    const selectedLibrary = library;
+
+    const sequence = (async () => {
+      try {
+        for (let nextEffect = 1; nextEffect <= 123; nextEffect++) {
+          if (token.cancelled) return;
+          setSequenceEffect(nextEffect);
+          const playResponse = await call({
+            play: { library: selectedLibrary, effect: nextEffect },
+          });
+          if (token.cancelled) return;
+          if (!playResponse?.result)
+            throw new Error("Unexpected Play response");
+          if (playResponse.result.errorCode !== 0) {
+            throw new Error(
+              `Play effect ${nextEffect}: firmware error ${playResponse.result.errorCode}`
+            );
+          }
+
+          const startedAt = Date.now();
+          while (!token.cancelled) {
+            await new Promise((resolve) =>
+              window.setTimeout(resolve, STATUS_POLL_MS)
+            );
+            if (token.cancelled) return;
+            const statusResponse = await call({ getStatus: {} });
+            if (token.cancelled) return;
+            if (!statusResponse?.status)
+              throw new Error("Unexpected status response");
+            setStatus(statusResponse.status);
+            if (statusResponse.status.errorCode !== 0) {
+              throw new Error(
+                `Status for effect ${nextEffect}: firmware error ${statusResponse.status.errorCode}`
+              );
+            }
+            if (!statusResponse.status.playing) break;
+            if (Date.now() - startedAt >= EFFECT_TIMEOUT_MS) {
+              throw new Error(
+                `Effect ${nextEffect} did not finish within 10 seconds`
+              );
+            }
+          }
+        }
+        if (!token.cancelled)
+          setMessage("Sequence complete: 123 effects played.");
+      } catch (error) {
+        if (!token.cancelled) {
+          setMessage(
+            `Sequence stopped: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      } finally {
+        if (sequenceRef.current === token) {
+          sequenceRef.current = null;
+          sequencePromiseRef.current = null;
+        }
+        if (!token.unmounted) {
+          setSequenceRunning(false);
+          setSequenceEffect(null);
+        }
+      }
+    })();
+    sequencePromiseRef.current = sequence;
+  };
+
+  const stopOutput = async () => {
+    if (!ready || busy || sequenceStopping) return;
+    const token = sequenceRef.current;
+    if (token) {
+      token.cancelled = true;
+      setSequenceStopping(true);
+      setMessage("Stopping sequence…");
+      // Wait for the current RPC to settle before issuing Stop. Studio calls
+      // are serialized so Stop cannot overtake a pending Play or status read.
+      await sequencePromiseRef.current;
+      if (token.unmounted) return;
+    }
+    setBusy(true);
+    try {
+      const response = await call({ stop: {} });
+      if (!response?.result) throw new Error("Unexpected Stop response");
+      setMessage(
+        response.result.errorCode === 0
+          ? token
+            ? "Sequence stopped."
+            : "Stop succeeded."
+          : `Stop failed: firmware error ${response.result.errorCode}.`
+      );
+    } catch (error) {
+      setMessage(
+        `Stop request failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      setBusy(false);
+      setSequenceStopping(false);
     }
   };
 
@@ -239,11 +362,12 @@ export function HapticLabSection() {
               Status register: 0x{status.status.toString(16).padStart(2, "0")}
             </p>
             <p>Firmware error code: {status.errorCode}</p>
+            <p>Output: {status.playing ? "playing" : "idle"}</p>
           </>
         )}
         <button
           className="btn btn-secondary"
-          disabled={!ready || busy}
+          disabled={!ready || busy || sequenceRunning || sequenceStopping}
           onClick={() => void refreshStatus()}
         >
           Refresh status
@@ -255,6 +379,7 @@ export function HapticLabSection() {
         <select
           id="library-input"
           value={library}
+          disabled={sequenceRunning || sequenceStopping}
           onChange={(event) => setLibrary(Number(event.target.value))}
         >
           {[1, 2, 3, 4, 5, 6].map((value) => (
@@ -276,6 +401,7 @@ export function HapticLabSection() {
           max="123"
           step="1"
           value={effect}
+          disabled={sequenceRunning || sequenceStopping}
           onChange={(event) => setEffect(Number(event.target.value))}
         />
       </div>
@@ -285,6 +411,8 @@ export function HapticLabSection() {
           disabled={
             !ready ||
             busy ||
+            sequenceRunning ||
+            sequenceStopping ||
             !Number.isInteger(effect) ||
             effect < 1 ||
             effect > 123
@@ -295,11 +423,36 @@ export function HapticLabSection() {
         </button>
         <button
           className="btn btn-secondary"
-          disabled={!ready || busy}
-          onClick={() => void runAction("stop")}
+          disabled={!ready || busy || sequenceStopping}
+          onClick={() => void stopOutput()}
         >
           Stop
         </button>
+      </div>
+      <div className="sequence-panel">
+        <h3>Sequential playback</h3>
+        <p>
+          Play ROM effects 1 through 123 in order with the selected library.
+          Each effect must finish before the next starts.
+        </p>
+        <button
+          className="btn btn-primary"
+          disabled={!ready || busy || sequenceRunning || sequenceStopping}
+          onClick={startSequence}
+        >
+          Start sequence
+        </button>
+        {sequenceRunning && (
+          <p
+            role="progressbar"
+            aria-valuemin={1}
+            aria-valuemax={123}
+            aria-valuenow={sequenceEffect ?? 1}
+          >
+            Effect {sequenceEffect ?? 1} of 123
+            {sequenceStopping ? " — stopping…" : ""}
+          </p>
+        )}
       </div>
       {message && (
         <p role="status" className="response-box">

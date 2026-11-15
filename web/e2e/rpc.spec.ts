@@ -19,6 +19,10 @@ test("status and action RPCs reach the firmware", async ({ page, request }) => {
   await expect(
     page.getByText("Firmware error code:", { exact: false })
   ).toBeVisible();
+  await page.getByRole("button", { name: "Start sequence" }).click();
+  await expect(page.getByRole("status")).toContainText(
+    /Sequence stopped: Play effect 1: firmware error/
+  );
   await page.getByRole("button", { name: "Stop" }).click();
   await expect(page.getByRole("status")).toContainText(
     /Stop failed: firmware error/

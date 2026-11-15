@@ -102,3 +102,13 @@ select {
   padding: 0.35rem;
   min-width: 5rem;
 }
+
+.sequence-panel {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid #ccd3da;
+}
+
+.sequence-panel h3 {
+  margin-top: 0;
+}

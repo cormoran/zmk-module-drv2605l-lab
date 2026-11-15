@@ -135,3 +135,133 @@ it("shows the missing subsystem warning", () => {
     screen.getByText(/Subsystem "cormoran__drv2605l_lab" not found/)
   ).toBeInTheDocument();
 });
+
+it("waits for GO to clear before the next effect and cancels without overlapping Stop", async () => {
+  const events: string[] = [];
+  let resolveSecondPlay: ((response: unknown) => void) | undefined;
+  let pollCount = 0;
+  zmkClient.call_rpc.mockImplementation(
+    (
+      _connection: unknown,
+      request: { custom?: { call?: { payload: Uint8Array } } }
+    ) => {
+      if (!request.custom?.call)
+        return Promise.resolve({ core: { getLockState: 2 } });
+      const decoded = Request.decode(request.custom.call.payload);
+      const encode = (response: Response) => ({
+        custom: { call: { payload: Response.encode(response).finish() } },
+      });
+      if (decoded.getStatus) {
+        pollCount++;
+        events.push("status");
+        // First request is the initial status load. The first sequence poll
+        // reports GO=1, and the next reports GO=0.
+        return Promise.resolve(
+          encode(
+            Response.create({
+              status: {
+                present: true,
+                ready: true,
+                status: 0,
+                errorCode: 0,
+                playing: pollCount === 2,
+              },
+            })
+          )
+        );
+      }
+      if (decoded.play) {
+        events.push(`play:${decoded.play.effect}`);
+        if (decoded.play.effect === 2) {
+          return new Promise((resolve) => {
+            resolveSecondPlay = resolve;
+          });
+        }
+        return Promise.resolve(
+          encode(Response.create({ result: { errorCode: 0 } }))
+        );
+      }
+      if (decoded.stop) {
+        events.push("stop");
+        return Promise.resolve(
+          encode(Response.create({ result: { errorCode: 0 } }))
+        );
+      }
+      throw new Error("unexpected RPC");
+    }
+  );
+  renderConnected();
+  await screen.findByText("Bus: ready");
+  const user = userEvent.setup();
+  await user.selectOptions(screen.getByLabelText("ROM library"), "6");
+  await user.click(screen.getByRole("button", { name: "Start sequence" }));
+  await waitFor(() => expect(events).toContain("play:2"));
+  expect(events).toEqual(["status", "play:1", "status", "status", "play:2"]);
+  expect(
+    customRequests()
+      .filter((request) => request.play)
+      .map((request) => request.play)
+  ).toEqual([
+    { library: 6, effect: 1 },
+    { library: 6, effect: 2 },
+  ]);
+  await user.click(screen.getByRole("button", { name: "Stop" }));
+  expect(events).not.toContain("stop");
+  resolveSecondPlay?.({
+    custom: {
+      call: {
+        payload: Response.encode(
+          Response.create({ result: { errorCode: 0 } })
+        ).finish(),
+      },
+    },
+  });
+  await screen.findByText("Sequence stopped.");
+  expect(events).toEqual([
+    "status",
+    "play:1",
+    "status",
+    "status",
+    "play:2",
+    "stop",
+  ]);
+  await new Promise((resolve) => setTimeout(resolve, 75));
+  expect(customRequests().filter((request) => request.play)).toHaveLength(2);
+});
+
+it("stops a sequence on a firmware Play error", async () => {
+  zmkClient.call_rpc.mockImplementation(
+    (
+      _connection: unknown,
+      request: { custom?: { call?: { payload: Uint8Array } } }
+    ) => {
+      if (!request.custom?.call)
+        return Promise.resolve({ core: { getLockState: 2 } });
+      const decoded = Request.decode(request.custom.call.payload);
+      const response = decoded.getStatus
+        ? Response.create({
+            status: {
+              present: true,
+              ready: true,
+              status: 0,
+              errorCode: 0,
+              playing: false,
+            },
+          })
+        : Response.create({ result: { errorCode: -22 } });
+      return Promise.resolve({
+        custom: { call: { payload: Response.encode(response).finish() } },
+      });
+    }
+  );
+  renderConnected();
+  await screen.findByText("Bus: ready");
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Start sequence" }));
+  await screen.findByText(
+    "Sequence stopped: Play effect 1: firmware error -22"
+  );
+  expect(customRequests().filter((request) => request.play)).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "Start sequence" })).toBeEnabled();
+});
